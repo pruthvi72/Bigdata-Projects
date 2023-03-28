@@ -1,0 +1,669 @@
+Document--1:
+------------
+
+=> 1:
+select count(*) count,(case when (2022-year(dob))<=14 then "Children" 
+				    when (2022-year(dob)) between 15 and 24 then "Youth"
+	                      when (2022-year(dob)) between 25 and 64 then "Adults"
+      	                else "Seniors"
+            	          end)"Category"
+from patient p join treatment t on t.patientid=p.patientid where year(t.date)=2022 group by category;
+										
+=>2:
+
+select a.diseasename,a.m as male,b.f as female from
+	(select d.diseasename, count(*) "f" from person p 
+	join treatment t on p.personid=t.patientid
+	join disease d on d.diseaseID=t.diseaseID where p.gender="female" group by d.diseaseName)b,
+	(select d.diseasename, count(*) "m" from person p 
+	join treatment t on p.personid=t.patientid 
+	join disease d on d.diseaseID=t.diseaseID where p.gender="male" group by d.diseaseName)a 
+	where a.diseasename=b.diseasename order by a.diseasename;
+
+=>3:
+
+select p.gender,count(t.treatmentid) treatments, count(t.claimid) claims, (count(t.treatmentid)/count(t.claimid)) "claimratio" from person p 
+	join treatment t on p.personid=t.patientid group by p.gender order by 1;
+
+=>4:
+
+select p.pharmacyid,sum( k.quantity*m.maxPrice) "Total", sum((k.quantity*m.maxPrice-k.quantity*m.maxPrice*k.discount/100)) " After Discount"
+from pharmacy p 
+join keep k on p.pharmacyID=k.pharmacyID
+join medicine m on k.medicineID=m.medicineID group by p.pharmacyid;
+
+=>5:
+
+select pharmacyname, max(cnt) mx, min(cnt) mn, avg(cnt) ag from 
+(select p1.pharmacyname,p.prescriptionid, sum(c.quantity) cnt from prescription p 
+join pharmacy p1 on p1.pharmacyid = p.pharmacyid
+join contain c on p.prescriptionid=c.prescriptionid
+group by 1,2 order by 1,2 )a group by 1;
+
+###########################################################################################################################################
+
+Document--2:
+------------
+
+=> 1:
+
+select x.City,count(phid) "Pharmacies",sum(cnt) "Prescriptions",(count(phid)/sum(cnt)) Ratio from 
+	(select a.city city,p.pharmacyid phid,count(p1.prescriptionid) cnt from address a,pharmacy p,prescription p1
+	where a.addressid=p.addressid and p1.pharmacyid=p.pharmacyid group by a.city,p.pharmacyid order by 1)x
+	group by x.city having sum(cnt)>100 order by 1;
+
+=> 2:
+
+select city,diseasename,max(cnt) from (select a.city,d.diseasename, count(t.patientid) cnt,
+	dense_rank() over(partition by a.city order by a.city desc,count(t.patientid) desc) rn from treatment t 
+	join person p on t.patientid=p.personid
+	join address a on a.addressid=p.addressid 
+	join disease d on d.diseaseid=t.diseaseid
+	where a.state="al" group by a.city,2 order by 1 desc,3 desc)a 
+	where rn=1 group by 1,2;
+
+=>3
+
+create view tab1 as select pname,dname,cnt from (select pname,dname,cnt,row_number() over(partition by dname order by cnt desc) rn 
+	from (select i.planname pname,d.diseasename dname, count(t.claimid) cnt from treatment t
+	join disease d on t.diseaseid=d.diseaseid
+	join claim c on t.claimid=c.claimid
+	join insuranceplan i on i.uin=c.uin group by 1,2 order by 2,3 desc)x order by 2,3 desc)y where rn=1;
+
+create view tab2 as select pname,dname,cnt from (select pname,dname,cnt,row_number() over(partition by dname order by cnt) rn 
+	from (select i.planname pname,d.diseasename dname, count(t.claimid) cnt from treatment t
+	join disease d on t.diseaseid=d.diseaseid
+	join claim c on t.claimid=c.claimid
+	join insuranceplan i on i.uin=c.uin group by 1,2 order by 2,3)x order by 2,3 desc)y where rn=1;
+
+select a1.dname,a1.cnt max,a1.pname,a2.cnt min,a2.pname from tab1 a1 join tab2 a2 on a1.dname=a2.dname;
+
+=> 4:
+SELECT DISEASEID, DISEASENAME, COUNT(ADDRESSID) "ADDRESS COUNT" FROM
+	(SELECT DI.DISEASENAME, TR.DISEASEID, AD.ADDRESSID, COUNT(PE.PERSONID) FROM ADDRESS AD INNER JOIN PERSON PE ON PE.ADDRESSID = AD.ADDRESSID
+	INNER JOIN TREATMENT TR ON TR.PATIENTID = PE.PERSONID
+	INNER JOIN DISEASE DI ON TR.DISEASEID = DI.DISEASEID 
+	GROUP BY TR.DISEASEID, AD.ADDRESSID HAVING(COUNT(PE.PERSONID))>1) A 
+GROUP BY DISEASEID, DISEASENAME ORDER BY 3 DESC;
+
+=> 5:
+
+select a.State,count(t.treatmentid) Treatments,count(t.claimid) Claims,count(t.claimid)/count(t.treatmentid) Ratio from treatment t
+	join person p on p.personid=t.patientid
+	join address a on a.addressid=p.addressid
+	where t.date between "2021-04-01" and "2022-03-31" group by 1;
+
+###########################################################################################################################################
+
+Document-3:
+----------
+
+=> 1:
+
+select phid,dt,cont from
+(select phid,dt,count(pid)*sum(cnt) cont,row_number() over(partition by dt order by count(pid)*sum(cnt) desc) rn from 
+(select p1.pharmacyname phid,p.prescriptionid pid,year(t.date) dt,count(c.medicineid) cnt from treatment t
+	join prescription p on t.treatmentID=p.treatmentID
+	join contain c on c.prescriptionID=p.prescriptionID
+      join pharmacy p1 on p1.pharmacyid=p.pharmacyID
+	join medicine m on m.medicineid=c.medicineID where m.hospitalexclusive ="s" and year(t.date) in (2021,2022)
+	group by 1,2 order by 1,3 desc)a group by 1,2)x where rn=1;
+
+=> 2:
+
+select ic.companyname,i.planname,count(t.claimid) from treatment t 
+	join claim c on t.claimid=c.claimid
+	join insuranceplan i on i.uin=c.uin
+	join insurancecompany ic on ic.companyid=i.companyid group by 1,2 order by 1;
+
+=> 3:
+
+select x.cn Companyname,x.pn Maxclaims,x.cnt count,y.pn Minclaims,y.cnt count from 
+(select cn, pn,cnt from (select ic.companyname cn,i.planname pn,count(t.claimid) cnt,
+	row_number() over(partition by ic.companyname order by count(t.claimid) desc) rn from treatment t 
+	join claim c on t.claimid=c.claimid
+	join insuranceplan i on i.uin=c.uin
+	join insurancecompany ic on ic.companyid=i.companyid group by 1,2 order by 1,3 desc)a where rn=1)x,
+(select cn,pn,cnt from (select ic.companyname cn,i.planname pn,count(t.claimid) cnt,
+	row_number() over(partition by ic.companyname order by count(t.claimid)) rn from treatment t 
+	join claim c on t.claimid=c.claimid
+	join insuranceplan i on i.uin=c.uin
+	join insurancecompany ic on ic.companyid=i.companyid group by 1,2 order by 1,3)b where rn=1)y where x.cn=y.cn;
+
+=> 4:
+
+select x.state,x.cnt patients,y.cnt persons,y.cnt/x.cnt ratio from
+(select a.state,count(distinct t.patientid) cnt from address a
+	join person p on p.addressid=a.addressid
+	join treatment t on t.patientid=p.personid group by a.state)x
+,(select a.state,count(p.personid) cnt from address a
+	join person p on p.addressid=a.addressid
+	group by a.state)y where x.state=y.state;
+
+=> 5:
+
+create view v1 as select phid,count(pid)*sum(cnt) m from 
+(select p.pharmacyid phid,p.prescriptionid pid,count(c.medicineid) cnt from treatment t
+	join prescription p on t.treatmentID=p.treatmentID
+	join contain c on c.prescriptionID=p.prescriptionID
+	join medicine m on m.medicineid=c.medicineID where m.taxCriteria="I" and year(t.date)="2021"
+	group by 1,2 order by 1,2)a group by 1;
+
+select p.Pharmacyname,v.m Medicines_count from pharmacy p
+	join address a on a.addressID=p.addressID
+	join v1 v on v.phid=p.pharmacyID where a.state="az";
+
+***********************************************************************************************************************************
+select p1.Pharmacyname,x.m Medicines_count from (select phid,count(pid)*sum(cnt) m from 
+(select p.pharmacyid phid,p.prescriptionid pid,count(c.medicineid) cnt from treatment t
+	join prescription p on t.treatmentID=p.treatmentID
+	join contain c on c.prescriptionID=p.prescriptionID
+	join medicine m on m.medicineid=c.medicineID where m.taxCriteria="I" and year(t.date)="2021"
+	group by 1,2 order by 1,2)a group by 1)x join pharmacy p1 on p1.pharmacyid=x.phid
+    join address a1 on a1.addressID=p1.addressid where a1.state="az";
+
+###########################################################################################################################################
+
+Document-4:
+-----------
+
+=> 1:
+select distinct producttype from medicine;
+select * from 
+(select medicineID, companyName, productName, description, 
+substanceName,(case  when producttype=1 and taxCriteria="I" then "Generic"
+								when producttype=2 and taxCriteria="I" then "Patent"
+                                when producttype=3 and taxCriteria="I" then "References"
+                                when producttype=4 and taxCriteria="II" then "Similar"
+                                when producttype=5 and taxCriteria="II" then "New"
+                                when producttype=6 and taxCriteria="II" then "Specific"
+end)type, taxCriteria from medicine)a where type is not null;
+
+
+=> 2:
+select prescriptionid, sum(quantity) Quantity,
+	(case when sum(quantity)<20 then "Low Quantity" 
+	when sum(quantity) between 20 and 49 then "Medium Quantity"
+      else "High Quantity" end)"Count"
+from contain group by 1 order by 1;
+
+=> 3:
+select * from (select p.pharmacyname,k.medicineid, k.quantity,k.discount,
+(case when (k.quantity>7500 and k.discount=0 ) then "High Quantity"
+	  when (k.quantity<1000 and k.discount>=30 ) then "Low Quantity"
+	  end)"Type" from pharmacy p 
+join keep k on p.pharmacyid=k.pharmacyid where p.pharmacyname="Spot Rx")a where type is not null;
+
+
+=> 4:
+
+select * from (select Medicineid,Productname,Description,Maxprice,
+(case when (maxprice<(select avg(maxprice)*0.5 from medicine)) then "Affordable"
+	  when (maxprice>2*(select avg(maxprice) from medicine)) then "Costly"
+	  else null end)"Type"
+from medicine)a where type is not null; 
+
+=> 5:
+
+select p1.Personname, p1.Gender, p.Dob, (
+case when p.dob>"2005-01-01" and p1.gender="male" then "YoungMale"
+	 when p.dob>"2005-01-01" and p1.gender="female" then "YoungFemale"
+     when (p.dob between "1985-01-01" and "2005-01-01") and p1.gender="male" then "AdultMale"
+     when (p.dob between "1985-01-01" and "2005-01-01") and p1.gender="female" then "AdultFemale"
+     when (p.dob between "1970-01-01" and "1985-01-01") and p1.gender="male" then "MidAgeMale"
+     when (p.dob between "1970-01-01" and "1985-01-01") and p1.gender="female" then "MidAgeFemale"
+     when p.dob<"1970-01-01" and p1.gender="male" then "ElderMale"
+     else "ElderMale"
+end )Category
+ from patient p
+join person p1 on p.patientID=p1.personid;
+
+###########################################################################################################################################
+
+Document-5:
+------------
+
+=> 1:
+(select p1.personname,p1.personID, count(t.treatmentid) Treatments,timestampdiff(year,p.dob,"2022-12-31")Age from treatment t 
+join patient p on p.patientid=t.patientid
+join person p1 on p1.personid=t.patientid 
+group by 1,2,4 having count(t.treatmentid)>1 order by 3 desc);
+
+=> 2:
+
+select d.diseasename,Male, Female, Male/Female Ratio from 
+(select t.diseaseid,count(p.gender) "Male" from treatment t join person p on t.patientID=p.personid 
+where p.gender="female" and year(t.date)=2021 group by 1 order by 1)a
+,(select t.diseaseid,count(p.gender) "Female" from treatment t join person p on t.patientID=p.personid 
+where p.gender="male" and year(t.date)=2021 group by 1 order by 1)b 
+join disease d where a.diseaseid=b.diseaseid and d.diseaseid=a.diseaseid order by 1;
+
+=> 3:
+
+select * from 
+(select row_number() over(partition by d.diseasename order by d.diseasename,count(t.treatmentid) desc) rn,
+d.Diseasename, a.City,count(t.treatmentid) cnt from treatment t
+join person p on p.personid=t.patientid
+join disease d on d.diseaseid=t.diseaseID
+join address a on a.addressid=p.addressid group by 2,3 order by 2,4 desc)a where rn in (1,2,3);
+
+=> 4:
+
+select a.pharmacyname, a.diseasename, a.cnt "2021",b.pharmacyname, b.diseasename, b.cnt "2022" from 
+(select p.pharmacyname, d.diseasename, count(p1.prescriptionid) cnt from pharmacy p
+join prescription p1 on p.pharmacyID=p1.pharmacyID
+join treatment t on t.treatmentid=p1.treatmentid 
+join disease d on d.diseaseid=t.diseaseID
+where year(t.date)=2021 group by 1,2 )a
+right join
+(select p.pharmacyname, d.diseasename, count(p1.prescriptionid) cnt from pharmacy p
+join prescription p1 on p.pharmacyID=p1.pharmacyID
+join treatment t on t.treatmentid=p1.treatmentid 
+join disease d on d.diseaseid=t.diseaseID
+where year(t.date)=2022 group by 1,2 )b on
+ a.pharmacyname=b.pharmacyname and a.diseasename=b.diseasename order by 1 desc;
+
+=> 5:
+
+SELECT IC.COMPANYNAME, AD.STATE, COUNT(TR.CLAIMID) FROM ADDRESS AD INNER JOIN INSURANCECOMPANY IC ON AD.ADDRESSID = IC.ADDRESSID
+	INNER JOIN INSURANCEPLAN IP ON IC.COMPANYID = IP.COMPANYID
+	INNER JOIN CLAIM CL ON IP.UIN = CL.UIN
+	INNER JOIN TREATMENT TR ON TR.CLAIMID = CL.CLAIMID GROUP BY IC.COMPANYNAME, AD.STATE; 
+
+###########################################################################################################################################
+
+Document-6:
+-----------
+
+=> 1:
+
+CREATE VIEW PERCENTAGE AS (
+	SELECT PH.PHARMACYID, PH.PHARMACYNAME, ME.PRODUCTNAME, CO.QUANTITY, ME.HOSPITALEXCLUSIVE, YEAR(TR.DATE) "YEAR"
+	FROM PHARMACY PH INNER JOIN PRESCRIPTION PR ON PH.PHARMACYID = PR.PHARMACYID
+	INNER JOIN CONTAIN CO ON CO.PRESCRIPTIONID = PR.PRESCRIPTIONID
+	INNER JOIN MEDICINE ME ON ME.MEDICINEID = CO.MEDICINEID
+	INNER JOIN TREATMENT TR ON PR.TREATMENTID = TR.TREATMENTID WHERE YEAR(TR.DATE) = "2022");
+
+SELECT PHARMACYID, PHARMACYNAME, @V1 := (SELECT SUM(QUANTITY) FROM PERCENTAGE WHERE PHARMACYID = P.PHARMACYID) "TOTAL QAUNTITY 2022",
+					   @V2:= (SELECT SUM(QUANTITY) FROM PERCENTAGE WHERE PHARMACYID = P.PHARMACYID AND HOSPITALEXCLUSIVE = "S") "HE QUANTITY 2022",
+					   @V2/@V1*100 "PERCENTAGE_2022" FROM PERCENTAGE P GROUP BY PHARMACYID ORDER BY PERCENTAGE_2022 DESC;
+
+
+=> 2:
+select a.state,count(t.treatmentid) "Treatments",count(t.treatmentid)-count(t.claimid) "Nonclaims",((count(t.treatmentid)-count(t.claimid))/count(t.treatmentid))*100 Ratio from treatment t
+join person p on p.personid=t.patientid 
+join address a on a.addressID=p.addressid group by 1;
+
+=> 3:
+
+with ct63 as
+(select a.state s,d.diseasename d,count(t.patientid) cnt,
+row_number() over(partition by state order by a.state,count(t.patientid) desc) rn,
+row_number() over(partition by state order by a.state,count(t.patientid)) rn1 from treatment t
+join disease   d on d.diseaseid=t.diseaseID
+join person p on p.personid=t.patientid
+join address a on a.addressID=p.addressID where year(t.date)=2022 group by 1,2 order by 1,3 desc)
+select distinct s State,(select d from ct63 where s=c.s and rn=1) "Most Treated Disease",
+(select cnt from ct63 where s=c.s and rn=1) "NO. of Patients", 
+(select d from ct63 where s=c.s and rn1=1) "Minimum Treated Disease",
+(select cnt from ct63 where s=c.s and rn1=1) "No. Of Patients"
+from ct63 c;
+
+
+=> 4:
+
+select a.City, b.cnt1 "Persons", a.cnt "Patients",(a.cnt/b.cnt1)*100 "Ratio" from
+(select a.city, count(distinct p.personid) cnt from address a
+left join person p on a.addressID=p.addressID 
+join treatment t on t.patientid=p.personid 
+group by 1 having count(p.personid)>=10 order by 1)a,
+(select a.city,count(p.personid) cnt1 from address a
+left join person p on a.addressID=p.addressID group by 1 having count(p.personid)>=10 order by 1)b
+where a.city=b.city;
+
+=> 5:
+
+select companyname,count(*) from medicine where substanceName="ranitidina" group by 1 order by 2 desc limit 3;
+
+###########################################################################################################################################
+
+Document-7
+----------
+
+=> 1:
+
+DROP PROCEDURE IF EXISTS PROB071;
+DELIMITER $$
+CREATE PROCEDURE PROB071 (DISID INT)
+BEGIN
+	DECLARE V1 INT;
+	DECLARE V2 INT;
+	SELECT AVG(CNT) "AVERAGE" INTO V1 FROM
+	( SELECT DI.DISEASENAME, COUNT(TR.CLAIMID) "CNT" FROM TREATMENT TR INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID GROUP BY DI.DISEASENAME ) A;
+	SELECT COUNT(CLAIMID) INTO V2 FROM TREATMENT WHERE DISEASEID = DISID;
+	IF V2 > V1 THEN 
+		SELECT "CLAIMED HIGHER THAN AVERAGE";
+	ELSE
+		SELECT "CLAIMED LOWER THAN AVERAGE";
+	END IF;
+END $$
+DELIMITER ;
+CALL PROB071(30);
+
+=> 2:
+
+CREATE VIEW DISGEN AS (
+	SELECT DI.DISEASENAME, DI.DISEASEID, TR.PATIENTID, PE.GENDER FROM PERSON PE INNER JOIN TREATMENT TR ON PE.PERSONID = TR.PATIENTID
+	INNER JOIN DISEASE DI ON TR.DISEASEID = DI.DISEASEID);
+
+DELIMITER $$
+CREATE PROCEDURE GENREPDIS(DISID INT)
+BEGIN
+	SELECT DISEASENAME , @V1 := (SELECT COUNT(PATIENTID) FROM DISGEN WHERE GENDER = "MALE" AND DISEASENAME = DI.DISEASENAME) "MALE NUM",
+	@V2 := (SELECT COUNT(PATIENTID) FROM DISGEN WHERE GENDER = "FEMALE" AND DISEASENAME = DI.DISEASENAME) "FEMALE NUM",
+	(CASE WHEN @V1=@V2 THEN "SAME"
+		WHEN @V1>@V2 THEN "MALE"
+	      WHEN @V1<@V2 THEN "FEMALE"
+      	END) "MORE TREATED" FROM DISGEN DI WHERE DISEASEID = DISID GROUP BY DISEASENAME;
+END $$
+
+CALL GENREPDIS(27);
+
+=> 3: # DENSE RANK
+
+CREATE VIEW TOP3 AS (
+	SELECT IC.COMPANYNAME, IP.PLANNAME, COUNT(TR.CLAIMID) "CNT" FROM INSURANCECOMPANY IC INNER JOIN INSURANCEPLAN IP ON IC.COMPANYID = IP.COMPANYID
+	INNER JOIN CLAIM CL ON IP.UIN = CL.UIN
+	INNER JOIN TREATMENT TR ON TR.CLAIMID = CL.CLAIMID
+	GROUP BY IC.COMPANYNAME, IP.PLANNAME );
+
+(SELECT COMPANYNAME, PLANNAME, "MOSTCLAIMED", CNT FROM TOP3 ORDER BY CNT DESC LIMIT 3)
+UNION
+(SELECT COMPANYNAME, PLANNAME, "LEASTCLAIMED", CNT FROM TOP3 ORDER BY CNT ASC LIMIT 3);
+
+=> 4:
+
+CREATE VIEW CATEPAT AS (
+	SELECT DI.DISEASENAME, (CASE WHEN PA.DOB < "1970-01-01" AND PE.GENDER = "MALE" THEN "ELDERMALE"
+			  WHEN PA.DOB < "1970-01-01" AND PE.GENDER = "FEMALE" THEN "ELDERFEMALE"
+			  WHEN PA.DOB < "1985-01-01" AND PE.GENDER = "MALE" THEN "MIDAGEMALE"
+			  WHEN PA.DOB < "1985-01-01" AND PE.GENDER = "FEMALE" THEN "MIDAGEFEMALE"
+			  WHEN PA.DOB < "2005-01-01" AND PE.GENDER = "MALE" THEN "ADULTMALE"
+			  WHEN PA.DOB < "2005-01-01" AND PE.GENDER = "FEMALE" THEN "ADULTFEMALE"
+			  WHEN PA.DOB >= "2005-01-01" AND PE.GENDER = "MALE" THEN "YOUNGMALE"
+			  WHEN PA.DOB >= "2005-01-01" AND PE.GENDER = "FEMALE" THEN "YOUNGFEMALE" 
+			  END) "CATEGORY", COUNT(TR.PATIENTID) "CNT"  FROM PATIENT PA INNER JOIN PERSON PE ON PE.PERSONID = PA.PATIENTID
+	INNER JOIN TREATMENT TR ON TR.PATIENTID = PA.PATIENTID
+	INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID GROUP BY DI.DISEASENAME, CATEGORY ORDER BY 1, 2);
+
+SELECT DISEASENAME, CATEGORY, CNT FROM CATEPAT CP WHERE CNT = (SELECT MAX(CNT) FROM CATEPAT WHERE DISEASENAME = CP.DISEASENAME);
+
+=> 5:
+
+SELECT * FROM  (SELECT COMPANYNAME, PRODUCTNAME, DESCRIPTION, MAXPRICE, 
+	(CASE WHEN MAXPRICE>1000 THEN "PRICEY"
+     	      WHEN MAXPRICE<5 THEN "AFFORDABLE"
+            END) "CATEGORY" FROM MEDICINE ORDER BY MAXPRICE DESC) A WHERE CATEGORY IS NOT NULL;
+
+
+###########################################################################################################################################
+
+Document-9:
+-----------
+
+=> 1:
+
+SELECT IFNULL(AD.STATE, 'TOTAL') STATE, IFNULL(PE.GENDER, "TOTALGEN") "GENDER", COUNT(PE.PERSONID) FROM ADDRESS AD 
+	INNER JOIN PERSON PE ON AD.ADDRESSID = PE.ADDRESSID
+	INNER JOIN TREATMENT TR ON TR.PATIENTID = PE.PERSONID
+	INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID 
+WHERE DI.DISEASENAME = "AUTISM" GROUP BY AD.STATE, PE.GENDER WITH ROLLUP;
+
+=> 2:
+
+SELECT  IFNULL(IP.PLANNAME,"TOTAL") "PLANNAME", IC.COMPANYNAME, IFNULL(YEAR(TR.DATE), "TOTAL-3-YEAR") "YEAR", COUNT(TR.TREATMENTID) FROM INSURANCECOMPANY IC 
+	INNER JOIN INSURANCEPLAN IP ON IC.COMPANYID = IP.COMPANYID
+	INNER JOIN CLAIM CL ON CL.UIN = IP.UIN
+	INNER JOIN TREATMENT TR ON TR.CLAIMID = CL.CLAIMID 
+WHERE YEAR(TR.DATE) IN ('2020', '2021', '2022') GROUP BY IP.PLANNAME, YEAR(TR.DATE) WITH ROLLUP;
+
+=> 3:
+
+DROP VIEW IF EXISTS PROB093;
+CREATE VIEW PROB093 AS (
+	SELECT AD.STATE, DI.DISEASENAME, COUNT(TR.TREATMENTID) "COUNT1", DENSE_RANK() OVER(PARTITION BY AD.STATE ORDER BY COUNT(TR.TREATMENTID)) "DENSE"
+	FROM ADDRESS AD INNER JOIN PERSON PE ON PE.ADDRESSID = AD.ADDRESSID
+	INNER JOIN TREATMENT TR ON TR.PATIENTID = PE.PERSONID
+	INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID
+	WHERE YEAR(TR.DATE) = '2022' GROUP BY AD.STATE, DI.DISEASENAME );
+
+SELECT IFNULL(STATE, "TOTAL") "STATE", DISEASENAME, COUNT1 FROM PROB093 PRO WHERE DENSE IN (1, (SELECT MAX(DENSE) FROM PROB093 WHERE STATE = PRO.STATE)) GROUP BY STATE, DISEASENAME WITH ROLLUP;
+
+=> 4:
+
+DROP VIEW IF EXISTS PROB094;
+CREATE VIEW PROB094 AS ( 
+	SELECT PH.PHARMACYNAME, DI.DISEASENAME, COUNT(PR.PRESCRIPTIONID) "COUNT1" FROM PHARMACY PH INNER JOIN PRESCRIPTION PR ON PH.PHARMACYID = PR.PHARMACYID 
+	INNER JOIN TREATMENT TR ON TR.TREATMENTID = PR.TREATMENTID
+	INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID
+WHERE YEAR(TR.DATE) = "2022" GROUP BY PH.PHARMACYNAME, DI.DISEASENAME );
+
+SELECT PHARMACYNAME, SUM(COUNT1) "TOTAL PRESCRIPTIONS" FROM PROB094 GROUP BY PHARMACYNAME ORDER BY 1;
+SELECT DISEASENAME, SUM(COUNT1) "TOTAL PRESCRIPTIONS" FROM PROB094 GROUP BY DISEASENAME ORDER BY 1;
+
+=> 5:
+
+SELECT IFNULL(DI.DISEASENAME, "TOTAL") "DISEASENAME" , PE.GENDER, COUNT(PE.PERSONID) "COUNT" FROM PERSON PE 
+	INNER JOIN TREATMENT TR ON TR.PATIENTID = PE.PERSONID
+	INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID 
+WHERE YEAR(TR.DATE) = "2022" GROUP BY DI.DISEASENAME, PE.GENDER WITH ROLLUP;
+
+###########################################################################################################################################
+
+Document-10:
+------------
+
+=> 1:
+
+CREATE VIEW PROB101 AS (
+	SELECT IP.COMPANYID, IP.PLANNAME, DI.DISEASENAME, COUNT(TR.TREATMENTID) "COUNT1", DENSE_RANK() OVER(PARTITION BY IP.COMPANYID, IP.PLANNAME ORDER BY COUNT(TR.TREATMENTID) DESC) 	"DENSERANK" FROM INSURANCEPLAN IP INNER JOIN CLAIM CL ON IP.UIN = CL.UIN 	
+	INNER JOIN TREATMENT TR ON TR.CLAIMID = CL.CLAIMID 
+	INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID
+	GROUP BY IP.COMPANYID, IP.PLANNAME, DI.DISEASENAME ORDER BY 1,2,4 DESC );
+
+DROP PROCEDURE IF EXISTS PROB101;
+DELIMITER $$
+CREATE PROCEDURE PROB101(COMPID INT)
+BEGIN
+	SELECT PLANNAME, SUM(COUNT1) "TOTAL TREATMENTS", 
+	(SELECT DISEASENAME FROM PROB101 WHERE PLANNAME = PR.PLANNAME  AND DENSERANK = 1 LIMIT 1) "DISEASENAME1" FROM PROB101 PR
+	WHERE COMPANYID = COMPID GROUP BY PLANNAME; 
+END $$
+DELIMITER ;
+CALL PROB101(1839);
+
+=> 2:
+
+DROP PROCEDURE IF EXISTS PROB102;
+DELIMITER $$
+CREATE PROCEDURE PROB102(DISNAME VARCHAR(20))
+BEGIN
+	SELECT PHARMACYNAME, YEAR, RANK1 FROM ( 
+		SELECT YEAR(TR.DATE) "YEAR", DI.DISEASENAME, PR.PHARMACYID, PH.PHARMACYNAME, COUNT(TR.PATIENTID) "COUNT1", 
+		ROW_NUMBER() OVER(PARTITION BY YEAR(TR.DATE), DI.DISEASENAME ORDER BY 	COUNT(TR.PATIENTID) DESC) "RANK1" FROM PHARMACY PH 
+		INNER JOIN PRESCRIPTION PR ON PR.PHARMACYID = PH.PHARMACYID
+		INNER JOIN TREATMENT TR ON TR.TREATMENTID = PR.TREATMENTID
+		INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID
+		WHERE YEAR(TR.DATE) IN ("2021", "2022") GROUP BY DI.DISEASENAME, PR.PHARMACYID, YEAR ORDER BY 1, 2, 5 DESC ) A 
+	WHERE RANK1 IN (1, 2, 3) AND DISEASENAME = DISNAME;
+END $$
+DELIMITER ;
+CALL PROB102("Asthma");
+
+=> 3:
+
+CREATE VIEW PROB102PAT AS (
+	SELECT AD.STATE, COUNT(PA.PATIENTID) "PATIENTCOUNT" FROM ADDRESS AD INNER JOIN PERSON PE ON PE.ADDRESSID = AD.ADDRESSID
+	INNER JOIN PATIENT PA ON  PA.PATIENTID = PE.PERSONID GROUP BY AD.STATE ORDER BY 1 );
+
+CREATE VIEW PROB102COMP AS ( 
+	SELECT AD.STATE, COUNT(IC.COMPANYID) "COMPANYCOUNT" FROM ADDRESS AD INNER JOIN INSURANCECOMPANY IC ON IC.ADDRESSID = AD.ADDRESSID
+	GROUP BY AD.STATE ORDER BY 1 );
+
+DROP PROCEDURE IF EXISTS PROB102;
+DELIMITER $$
+CREATE PROCEDURE PROB102 (STATE1 VARCHAR(10))
+BEGIN 
+	DECLARE V1 NUMERIC(20,5);
+	SELECT AVG(ALLRATIO) INTO V1 FROM (SELECT PAT.PATIENTCOUNT/COMP.COMPANYCOUNT "ALLRATIO" FROM PROB102PAT PAT INNER JOIN PROB102COMP COMP ON PAT.STATE = COMP.STATE) A;
+	SELECT PAT.STATE, PAT.PATIENTCOUNT, COMP.COMPANYCOUNT, PAT.PATIENTCOUNT/COMP.COMPANYCOUNT "STATERATIO", V1, 
+		CASE WHEN PAT.PATIENTCOUNT/COMP.COMPANYCOUNT < V1 THEN "RECOMMENDED" 
+			ELSE 	"NOT RECOMMENDED" 
+			END "RECOMMEND?"
+		FROM PROB102PAT PAT INNER JOIN PROB102COMP COMP ON PAT.STATE = COMP.STATE WHERE PAT.STATE = STATE1;
+END $$
+DELIMITER ;
+CALL PROB102("AL");
+
+=> 4:
+
+CREATE TABLE PlacesAdded(placeID INT PRIMARY KEY AUTO_INCREMENT, placeName VARCHAR(50),
+	placeType VARCHAR(5) CHECK(placeType IN ("city", "state")),
+      timeAdded DATETIME);
+            
+DROP TRIGGER IF EXISTS PROB104;            
+DELIMITER $$
+CREATE TRIGGER PROB104
+BEFORE INSERT ON ADDRESS
+FOR EACH ROW
+BEGIN
+	IF NEW.STATE NOT IN (SELECT DISTINCT(STATE) FROM ADDRESS) THEN 
+		INSERT INTO PLACESADDED(PLACENAME, PLACETYPE, TIMEADDED) VALUES(NEW.STATE, "state", NOW());
+	END IF;
+	IF NEW.CITY NOT IN (SELECT DISTINCT(CITY) FROM ADDRESS) THEN 
+		INSERT INTO PLACESADDED(PLACENAME, PLACETYPE, TIMEADDED) VALUES(NEW.CITY, "city", NOW());
+	END IF;	
+END $$
+DELIMITER ;
+
+SELECT * FROM PLACESADDED;
+INSERT INTO ADDRESS(ADDRESSID, ADDRESS1, CITY, STATE, ZIP) VALUES(12345, "SHANTINAGAR NAD X ROAD","VIZAG", "AP", 34556);
+
+=> 5:
+
+CREATE TABLE KEEP_LOG (ID INT UNIQUE AUTO_INCREMENT, MEDICINEID INT, QUANTITY INT);
+                      
+DROP TRIGGER IF EXISTS PROB105;
+DELIMITER $$
+CREATE TRIGGER PROB105
+BEFORE UPDATE ON KEEP
+FOR EACH ROW
+BEGIN
+	INSERT INTO KEEP_LOG(MEDICINEID, QUANTITY) VALUES (OLD.MEDICINEID, NEW.QUANTITY - OLD.QUANTITY);
+END $$
+DELIMITER ;
+
+SELECT * FROM KEEP_LOG;
+
+###########################################################################################################################################
+
+Document-11:
+------------
+
+USE HEALTHCARETABLES;
+
+=> 1:
+
+DROP PROCEDURE IF EXISTS PROB111;
+DELIMITER $$
+CREATE PROCEDURE PROB111 (MEDNAME VARCHAR(174))
+BEGIN 
+	SELECT PH.PHARMACYNAME, PH.PHARMACYID FROM KEEP KE INNER JOIN PHARMACY PH ON PH.PHARMACYID = KE.PHARMACYID 
+	WHERE KE.MEDICINEID IN (SELECT MEDICINEID FROM MEDICINE WHERE PRODUCTNAME LIKE CONCAT("%", MEDNAME, "%"));
+END $$
+DELIMITER ;
+CALL PROB111("OSTENAN");
+
+=> 2:
+
+DROP FUNCTION IF EXISTS PROB112;
+DELIMITER $$
+CREATE FUNCTION PROB112(PHID INT, YEAR1 VARCHAR(5))
+RETURNS NUMERIC(20,5) DETERMINISTIC
+BEGIN
+	DECLARE V1 NUMERIC;
+	SELECT AVERAGEPRICE INTO V1 FROM (
+		SELECT PRESCRIPTIONID, PHARMACYID, AVG(TOTALPRICE)"AVERAGEPRICE", YEAR FROM (
+			SELECT CO.PRESCRIPTIONID, PR.PHARMACYID, CO.QUANTITY*(SELECT MAXPRICE FROM MEDICINE WHERE MEDICINEID = CO.MEDICINEID) "TOTALPRICE", (SELECT YEAR(DATE) FROM TREATMENT 				WHERE TREATMENTID = (SELECT TREATMENTID FROM PRESCRIPTION WHERE PRESCRIPTIONID = CO.PRESCRIPTIONID)) "YEAR"
+			FROM CONTAIN CO INNER JOIN MEDICINE ME ON CO.MEDICINEID = ME.MEDICINEID
+			INNER JOIN PRESCRIPTION PR ON PR.PRESCRIPTIONID = CO.PRESCRIPTIONID
+			INNER JOIN TREATMENT TR ON TR.TREATMENTID = PR.TREATMENTID ORDER BY 1) A 
+		GROUP BY PHARMACYID, YEAR ORDER BY 2 ) B 
+	WHERE PHARMACYID = PHID AND YEAR = YEAR1;
+RETURN V1;
+END $$
+DELIMITER ;
+
+SELECT PROB112(5644, 2022) "AVG PRICE";
+
+=> 3:
+
+DROP FUNCTION IF EXISTS PROB113;
+DELIMITER $$
+CREATE FUNCTION PROB113(STATE1 VARCHAR(5), YEAR1 VARCHAR(5))
+RETURNS VARCHAR(100) DETERMINISTIC
+BEGIN
+	DECLARE V1 VARCHAR(100);
+	SELECT DISEASENAME INTO V1 FROM (
+		SELECT DISEASENAME, CNT FROM (
+			SELECT AD.STATE, COUNT(TR.PATIENTID) "CNT", TR.DISEASEID, DI.DISEASENAME, YEAR(TR.DATE) "YEAR" FROM ADDRESS AD 
+			INNER JOIN PERSON PE ON PE.ADDRESSID = AD.ADDRESSID
+			INNER JOIN TREATMENT TR ON TR.PATIENTID = PE.PERSONID
+			INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID GROUP BY AD.STATE, TR.DISEASEID, YEAR ORDER BY 5, 1 ) A 
+		WHERE STATE = STATE1 AND YEAR = YEAR1 ORDER BY 2 DESC ) B LIMIT 1;
+	RETURN V1;
+END $$
+DELIMITER ;
+
+SELECT PROB113("AL", 2019) "DISEASE NAME";
+
+=> 4:
+
+DROP FUNCTION IF EXISTS PROB114;
+DELIMITER $$
+CREATE FUNCTION PROB114(CITY1 VARCHAR(50), DISEASE1 VARCHAR(50), YEAR1 VARCHAR(5))
+RETURNS INT DETERMINISTIC
+BEGIN
+	DECLARE V1 INT;
+	SELECT CNT INTO V1 FROM (
+		SELECT COUNT(TR.PATIENTID) "CNT", AD.CITY, DI.DISEASENAME, YEAR(TR.DATE) "YEAR" FROM ADDRESS AD 
+		INNER JOIN PERSON PE ON PE.ADDRESSID = AD.ADDRESSID
+		INNER JOIN TREATMENT TR ON TR.PATIENTID = PE.PERSONID
+		INNER JOIN DISEASE DI ON DI.DISEASEID = TR.DISEASEID
+		GROUP BY AD.CITY, DI.DISEASENAME, YEAR ORDER BY 2,3,4 ) A 
+	WHERE CITY = CITY1 AND DISEASENAME = DISEASE1 AND YEAR = YEAR1;
+	RETURN V1;
+END $$
+DELIMITER ;
+
+SELECT PROB114("Anchorage", "Epilepsy", "2020") "COUNT OF PEOPLE";
+
+=> 5:
+
+DROP FUNCTION IF EXISTS PROB115;
+DELIMITER $$
+CREATE FUNCTION PROB115(ISCOMPANY VARCHAR(100))
+RETURNS NUMERIC(20,5) DETERMINISTIC
+BEGIN
+	DECLARE V1 NUMERIC(20,5);
+	SELECT AVGBALANCE INTO V1 FROM (
+		SELECT IC.COMPANYNAME, AVG(CL.BALANCE) "AVGBALANCE" FROM INSURANCECOMPANY IC 
+		INNER JOIN INSURANCEPLAN IP ON IP.COMPANYID = IC.COMPANYID	
+		INNER JOIN CLAIM CL ON CL.UIN = IP.UIN
+		INNER JOIN TREATMENT TR ON CL.CLAIMID = TR.CLAIMID WHERE YEAR(TR.DATE) = "2022" GROUP BY IC.COMPANYNAME ) A 
+	WHERE COMPANYNAME = ISCOMPANY;
+RETURN V1;
+END $$
+DELIMITER ;
+
+SELECT PROB115("Star Health and Allied Insurrance Co.") "AVERAGE BALANCE";
